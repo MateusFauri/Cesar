@@ -93,12 +93,18 @@ VISOR:		dab		[36]			; Portas de acesso ao visor
 ; 3) Inicializar as variáveis internas usadas pelo sistema de interrupções e periféricos (IVET, INTE, etc.)
 
 		CLR		INTS
+		AND		#HFE,INTE			;desabilitando a interrupção do timer, sera ligada só pela função timer 
 		MOV		#rotinaINT, IVET
 
 ; 4) Inicializar as variáveis internas do kernel
 
+auxiliarVolume:	DB		0
 CURSOR:		DB		0
-		
+enderecoT:	DW		0
+temporizador:	DW		0
+controleT:	DB		0
+contador:	DB		0
+	
 
 ; 5) Inicializar o teclado zerando o byte de estado (TECST, endereço 65498)
 		
@@ -124,8 +130,8 @@ limparVolumeLoop:					; seta os 3  byte do volume
 		CLR		CURSOR
 		
 ; 8) Habilitar interrupções
-		;mudar abaixo para h83 quando habilitar o timer
-		OR		#H82, INTE			; habilitando interrupções de teclado e timer 1000 - 0011
+						;mudar abaixo para h83 quando habilitar o timer
+		OR		#H82, INTE		; habilitando interrupções de teclado e timer 1000 - 0011
 
 ; 9) Retornar para o programa de aplicação com um desvio para o endereço _APP da memória
 		jmp		_APP
@@ -144,12 +150,18 @@ rotinaINT:
 		MOV		R5, -(R6)
 
 timerINT:
+		MOV		INTE, R1
+		AND		#H1, R1			; verifica se a interrução do timer esta ativa
+		BEQ		tecladoINT		; se for zero, vai as interrupções do timer estão desligadas, vai verificar o teclado
 		MOV		INTS, R0		; Verifica se a interrupção é do timer
 		AND		#1, R0
 		BEQ		tecladoINT		; se for, continua, se não vai verificar se é do teclado	
 		JSR		r7,tratamentoITimer	; trata a interrupção do timer
 		AND		#HFFFE,	INTS		; desliga o bit de interrupção do timer
 tecladoINT:
+		MOV		INTE, R1		
+		AND		#H2, R1
+		BEQ		fimINT			; verifica se a interrupção do teclado esta ativo
 		MOV		INTS,R0			; Verifica se a interrupção é do teclado
 		AND		#2,R0
 		BEQ		fimINT			; se nao for, vai para o fim da função interrupção
@@ -168,11 +180,22 @@ fimINT:
 
 
 tratamentoITimer:					; Tratamento de interrupção do timer
-		
+		CMP		controleT, #10		; ve se a variavel de controle do timer é 10
+		BNE		adicionarControle	; se não for, adiciona mais um a ela
+		CLR		controleT		; se chegou a dez, ja passou 1 (10 * 100ms) segundo, então limpamos ela para contar de novo			
+		DEC		temporizador		; diminui 1s do temporizador
+		BNE		fimTratamentoITimer	; se nao for zero, continua normalmente
+		JSR		R7, enderecoT		; se for zero, chama a callback	
+		OR		#H82, INTE		; desliga novamente a interrupção por timer
+		JMP		fimTratamentoITimer	
+adicionarControle:
+		INC		controleT
+		JMP		fimTratamentoITimer			
 		
 fimTratamentoITimer:
 		RTS		R7
 	
+
 tratamentoITeclado:					; Tratamento das interrupções de teclado
 		TST		TECST			; Testa se uma tecla foi teclada
 		BEQ		fimTratamentoITeclado	; se nao, acabou a subrotina	
@@ -218,62 +241,18 @@ getchar:
 ; void	putchar(BYTE c)
 ;------------------------------------------------------------------------------
 putchar:						; tem como parametro de entra o BYTE c no R5
-
+		CLR		auxiliarVolume
 		MOV		#VISOR,	R4
 		ADD		CURSOR, R4
 
 		CMP		R5, #H20		; compara o dado com H20 (minimo valor aceito)  = R5 - h20
 		BMI		naoASCII		; se o resultado for negativo, R5 é menor que o menor dado possivel, pula para outra verificação
 		CMP		#H7A, R5		; compara o dado com H7B (maior valor aceito + 1)  = H7B - R5
-		BMI		naoASCII		; se o valor não for negativo, R5 é maior que o maior dado possivel, pula para outra verificação
-
-		MOV		#VISOR, R3			
-		ADD		#35, R3			; R3 tem o endereço do volume no visor
-
-		CMP		R5, #H2B		; compara o dado com o sinal de +
-		BNE		verificar1		; se nao for igual, vai verificar o proximo (-)
-testarNovamente:
-		CMP		R3, #65532		; nao deve aumentar o mais de 9  o ultimo byte do volume
-		BEQ		fimVolue	
-		CMP		#57, (R3)		; comparar o ultimo byte do volume com 9
-		BNE		somarMaisUm
-		MOV		#48, (R3)
-		DEC		R3
-		JMP		testarNovamente
-somarMaisUm:
-		INC		(R3)			; aumentar volume em 1
-		JMP		fimVolue
-verificar1:
-		CMP		R5, #H2D		; compara o dado com sinal de -
-		BNE		verificar2		; se nao for igual, vai verificar o proximo (.)
-		DEC		(R3)			; diminui o volume em 1
-		JMP		fimVolue
-
-;Concluir os proximos 4 verificar!!!
-verificar2:
-		CMP		R5, #H2E		; compara dado com sinal de .
-		BNE		verificar3 		; se nao for igual, vai verificar o proximo (,)
-							; aumenta volume em 10
-		JMP		fimVolue
-
-verificar3:
-		CMP		R5, #H2C		; compara dado com sinal de ,
-		BNE		verificar4		; se nao for igual, vai verificar o proximo (>)
-							; diminui volume em 10
-		JMP		fimVolue	
-verificar4:
-		CMP		R5, #H3E		; compara dado com sinal >
-		BNE		verificar5		; se nao for igual, vai verificar o proximo (<)
-							; aumenta volume em 100
-		JMP		fimVolue
-verificar5:	
-		CMP		R5, #H3C		; compara dado com sinal <	
-		BNE		ascii			; se nao for igual, o caracter é ascii, colocar na tela
-							; diminui o volume em 100
-
-fimVolue:		
-		JMP		fimPutChar
-
+		BMI		naoASCII		; se o valor não for negativo, R5 é maior que o maior dado possivel, pula para outra verificaçã
+		
+		JSR		R7, testeVolume
+		CMP		auxiliarVolume, #1	; se for 1, o caracter era do volume, pular final
+		BEQ		fimPutChar
 ascii:
 		CMP		#65530, R4		; compara se o cursor ja saiu do limite
 		BEQ		fimPutChar		; vai para as outras verificações
@@ -313,37 +292,198 @@ fimPutChar:
 
 
 
+testeVolume:
+		CLR		auxiliarVolume
+
+		MOV		#VISOR, R3			
+		ADD		#35, R3			; R3 tem o endereço do volume no visor
+
+		CMP		R5, #H2B		; compara o dado com o sinal de +
+		BNE		verificarDez		; se nao for igual, vai verificar o somar 10
+		INC		auxiliarVolume
+testarNovamenteUm:
+		CMP		R3, #65532		; nao deve aumentar o mais de 9  o ultimo byte do volume
+		BEQ		fimVolume	
+		CMP		#57, (R3)		; comparar o ultimo byte do volume com 9
+		BNE		somarMaisUm
+		MOV		#48, (R3)
+		DEC		R3
+		JMP		testarNovamenteUm
+somarMaisUm:
+		INC		(R3)			; aumentar volume em 1
+		JMP		fimVolume
+
+verificarDez:
+		CMP		R5, #H2E		; compara dado com sinal de .
+		BNE		verificarCem 		; se nao for igual, vai verificar o somar 100
+		INC		auxiliarVolume
+		DEC		R3			; aumenta volume em 10
+testarNovamenteDez:
+		CMP		R3, #65532		; nao deve aumentar o mais de 9  o ultimo byte do volume
+		BEQ		fimVolume
+		CMP		#57, (R3)
+		BNE		somarMaisDez
+		MOV		#48, (R3)
+		DEC		R3
+		JMP		testarNovamenteDez
+somarMaisDez:
+		INC		(R3)
+		JMP		fimVolume
+
+verificarCem:
+		CMP		R5, #H3E		; compara dado com sinal >
+		BNE		diminuir		; se nao for igual, vai testar diminuir volume
+		INC		auxiliarVolume
+		SUB		#2, R3			; aumenta volume em 100
+		CMP		#57, (R3)
+		BEQ		naoSomarCem		
+		INC		(R3)
+naoSomarCem:
+		JMP		fimVolume
+
+fimVolume:		
+		RTS		R7
+		
+
+diminuir:
+		
+		CMP		R5, #H2D		; compara o dado com sinal de -
+		BNE		verificarDez_		; se nao for igual, vai verificar o diminuir 10
+		INC		auxiliarVolume
+		CMP		(R3), #48			; comparando o primeiro byte do volume com zero
+		BNE		diminuirUm	
+		DEC		R3
+		CMP		(R3), #48
+		BEQ		compararUltimo
+		MOV		#57, 1(R3)
+		DEC		(R3)
+		JMP		fimVolume
+compararUltimo:
+		DEC		R3
+		CMP		(R3), #48
+		BEQ		fimVolume
+		DEC		(R3)
+		MOV		#57, 1(R3)
+		MOV		#57, 2(R3)
+		JMP		fimVolume
+		
+diminuirUm:
+		DEC		(R3)			; diminui o volume em 1
+		CMP		1(R3), #0
+		BEQ		fimVolume
+		MOV		#57, 1(R3)
+		JMP		fimVolume
+
+verificarDez_:
+		CMP		R5, #H2C		; compara dado com sinal de ,
+		BNE		verificarCem_		; se nao for igual, vai verificar o diminuir 100
+		INC		auxiliarVolume
+		DEC		R3
+		CMP		#48, (R3)
+		BNE		diminuirDez
+		DEC		R3
+		CMP		#48, (R3)
+		BEQ		zerarVolume
+		DEC		(R3)
+		MOV		#57, 1(R3)
+		JMP		fimVolume
+diminuirDez:	
+		DEC		(R3)			; diminui volume em 10
+		JMP		fimVolume_	
+
+verificarCem_:	
+		CMP		R5, #H3C		; compara dado com sinal <	
+		BNE		fimVolume_		; se nao for igual, o caracter é ascii, colocar na tela
+		INC		auxiliarVolume
+		SUB		#2, R3			; diminui o volume em 100
+		CMP		(R3), #48
+		BEQ		zerarVolume
+		DEC		(R3)
+		JMP		fimVolume_
+
+zerarVolume:
+		MOV		#VISOR, R3			
+		ADD		#35, R3
+		MOV		#48, (R3)
+		DEC		R3
+		MOV		#48, (R3)
+		DEC		R3
+		MOV		#48, (R3)	
+		
+fimVolume_:	
+		RTS		R7
+
 ;		
 ;------------------------------------------------------------------------------
 ; void	putmsg(BYTE *msg)
 ;------------------------------------------------------------------------------
 putmsg:							; R5 tera o endereço de menoria onde inicia a string
-		CLR		CURSOR
+		AND		#H01, INTE		; desabilitar interrupções na escrita
 		MOV		R5, R2	
+		DEC		R2			; diminuo um do end da string pois 
 colocandoMSG:
 		MOV		(R2), R5		; move o dado do endereço do vetor da string para o registrador R5 (sera usado como parametro em putchar)
-		CMP		R5 , #H00		; compara se o valor da string é zero
+		INC		R2
+		AND		#HFF, R5
+		CMP		R5 , #0			; compara se o valor da string é zero
 		BEQ		fimPutMsg		; se for a string acabou, fim da subrotina
-		JSR		R7, putchar		; chama a função putchar com o dado da string no R5	
-		INC		R2	
+		JSR		R7, putchar		; chama a função putchar com o dado da string no R5		
 		JMP		colocandoMSG		; continua o laço até que o visor esteja cheio ou acabe a string
-		
+	
 fimPutMsg:
+		OR		#H82, INTE
 		RTS		R7
 
 ;		
 ;------------------------------------------------------------------------------
 ; void	timer(WORD tempo, WORD callback)
 ;------------------------------------------------------------------------------
-timer:
-		rts		r7
+timer:						; R5 - tempo do timer
+						; R4 - endereço da callback
+		MOV		R5, temporizador	; Movendo o tempo do timer para a variavel
+		MOV		R4, enderecoT		; movendo o endereço da callback para a variavel, para chamar mais tarde
+		OR		#H83, INTE		; ativando as interrupções pelo timer
+		RTS		r7
 				
 ;		
 ;------------------------------------------------------------------------------
 ; WORD	volume()
 ;------------------------------------------------------------------------------
-volume:
+volume:							; volta o volume no R0
+		MOV		#VISOR, R3			
+		ADD		#35, R3			; coloca o R3 como cursor do volume no primeiro byte
+		
+		CLR		R2
+		CLR		contador
 
-		rts		r7
+		CMP		(R3), #48		; ver se é igual a zero		
+		BEQ		segundoDigito
+		MOV		(R3), R0
+		SUB		#48,  R0		; deixar o numero em decimal novamente, nao em ascii
+segundoDigito:
+		DEC		R3
+		CMP		(R3), #48
+		BEQ		terceiroDigito
+		MOV		(R3), R2
+		SUB		#48, R2			; deixar o numero em decimal novamente, nao em ascii
+		MOV		#10, contador
+somar2D:
+		ADD		R2, R0			; adicionar 10 vezes o segundo digito
+		DEC		R2
+		BNE		somar2D
 
-
+terceiroDigito:
+		DEC		R3
+		CLR		contador
+		CMP		(R3), #48		; ver se é igual a zero
+		BEQ		finalVolume
+		MOV		(R3), R2
+		SUB		#48,  R2		; deixar o numero em decimal novamente, nao em ascii
+		MOV		#100, contador		; adicionar 100 vezes o terceiro digito
+somar3D:					
+		ADD		R2, R0	
+		DEC		R2
+		BNE		somar3D
+finalVolume:	
+		CLR		contador
+		RTS		R7
