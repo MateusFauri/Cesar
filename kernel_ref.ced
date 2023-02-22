@@ -1,4 +1,4 @@
-;
+ ;
 ;
 ;******************************************************************************
 ;
@@ -84,7 +84,7 @@ VISOR:		dab		[36]			; Portas de acesso ao visor
 		org		_RESET
 ; 1) Desabilitar o sistema de interrupções
 		
-		AND		#H78, INTE
+		AND		#HFF7C, INTE			; desabilitando as interrupções
 
 ; 2) Inicializar o stack pointer (SP = R6)
 
@@ -93,7 +93,6 @@ VISOR:		dab		[36]			; Portas de acesso ao visor
 ; 3) Inicializar as variáveis internas usadas pelo sistema de interrupções e periféricos (IVET, INTE, etc.)
 
 		CLR		INTS
-		AND		#HFE,INTE			;desabilitando a interrupção do timer, sera ligada só pela função timer 
 		MOV		#rotinaINT, IVET
 
 ; 4) Inicializar as variáveis internas do kernel
@@ -104,7 +103,9 @@ enderecoT:	DW		0
 temporizador:	DW		0
 controleT:	DB		0
 contador:	DB		0
-	
+
+		CLR		enderecoT		; limpando o endereco da função timer e o controle usado para contar os segundos
+
 
 ; 5) Inicializar o teclado zerando o byte de estado (TECST, endereço 65498)
 		
@@ -112,7 +113,7 @@ contador:	DB		0
 
 ; 6) Inicializar o timer
 
-		CLR		TIMDT
+		CLR		TIMDT			; setando o timer para 100 ms
 
 ; 7) Limpar o visor
 
@@ -128,9 +129,10 @@ limparVolumeLoop:					; seta os 3  byte do volume
 		BNE		limparVolumeLoop		
 		CLR		R4			; limpa o R4
 		CLR		CURSOR
+
 		
 ; 8) Habilitar interrupções
-						;mudar abaixo para h83 quando habilitar o timer
+
 		OR		#H82, INTE		; habilitando interrupções de teclado e timer 1000 - 0011
 
 ; 9) Retornar para o programa de aplicação com um desvio para o endereço _APP da memória
@@ -180,13 +182,15 @@ fimINT:
 
 
 tratamentoITimer:					; Tratamento de interrupção do timer
+		CMP		enderecoT, #0		; compara se o endereço da função do timer é 0
+		JMP		fimTratamentoITimer	; se for, quer dizer que ainda nao lemos nenhum dado, logo, nao fazemos nada.
 		CMP		controleT, #10		; ve se a variavel de controle do timer é 10
 		BNE		adicionarControle	; se não for, adiciona mais um a ela
 		CLR		controleT		; se chegou a dez, ja passou 1 (10 * 100ms) segundo, então limpamos ela para contar de novo			
 		DEC		temporizador		; diminui 1s do temporizador
 		BNE		fimTratamentoITimer	; se nao for zero, continua normalmente
 		JSR		R7, enderecoT		; se for zero, chama a callback	
-		OR		#H82, INTE		; desliga novamente a interrupção por timer
+		CLR		enderecoT		; limpa o endereco da função da variavel.
 		JMP		fimTratamentoITimer	
 adicionarControle:
 		INC		controleT
@@ -218,7 +222,7 @@ kbhit:
 		MOV		#1, R0			; se TECST for diferente de H80, a função deve retornar 1 (retorno pelo R0)
 		JMP		fimkbhit
 haTecla:
-		MOV		#0, R0
+		CLR		R0
 fimkbhit:
 		RTS		R7
 	
@@ -227,13 +231,16 @@ fimkbhit:
 ; BYTE	getchar()
 ;------------------------------------------------------------------------------
 getchar:
+		;AND		#HFFFD, INTE
+getcharloop:
 		JSR		R7, kbhit		; chama a função kbhit para ver se há tecla
 		CMP 		R0, #0			; testa se R0 (retorno de kbhit) é zero
-		BNE		getchar			; se não for, volta para 'getchar' ate R0 ser zero
+		BNE		getcharloop		; se não for, volta para 'getchar' ate R0 ser zero
 
 		MOV		TECDT, R0		; caso R0 for zero, coloca o dado que esta em TECDT e R0
 		CLR		TECST			; limpa TECST pois o dado ja foi lido
 
+		;OR		#2, INTE
 		RTS	 	R7			
 
 ;	
@@ -291,12 +298,9 @@ fimPutChar:
 		RTS		R7
 
 
-
 testeVolume:
-		CLR		auxiliarVolume
 
-		MOV		#VISOR, R3			
-		ADD		#35, R3			; R3 tem o endereço do volume no visor
+		MOV		#65535, R3			; R3 tem o endereço do volume no visor
 
 		CMP		R5, #H2B		; compara o dado com o sinal de +
 		BNE		verificarDez		; se nao for igual, vai verificar o somar 10
@@ -412,13 +416,12 @@ zerarVolume:
 		
 fimVolume_:	
 		RTS		R7
-
 ;		
 ;------------------------------------------------------------------------------
 ; void	putmsg(BYTE *msg)
 ;------------------------------------------------------------------------------
 putmsg:							; R5 tera o endereço de menoria onde inicia a string
-		AND		#H01, INTE		; desabilitar interrupções na escrita
+		AND		#HFFFD, INTE		; desabilitar interrupções na escrita
 		MOV		R5, R2	
 		DEC		R2			; diminuo um do end da string pois 
 colocandoMSG:
@@ -431,7 +434,7 @@ colocandoMSG:
 		JMP		colocandoMSG		; continua o laço até que o visor esteja cheio ou acabe a string
 	
 fimPutMsg:
-		OR		#H82, INTE
+		OR		#2, INTE		; habilita as interrupções de escrita novamente
 		RTS		R7
 
 ;		
@@ -442,7 +445,7 @@ timer:						; R5 - tempo do timer
 						; R4 - endereço da callback
 		MOV		R5, temporizador	; Movendo o tempo do timer para a variavel
 		MOV		R4, enderecoT		; movendo o endereço da callback para a variavel, para chamar mais tarde
-		OR		#H83, INTE		; ativando as interrupções pelo timer
+	;	OR		#H83, INTE		; ativando as interrupções pelo timer que estavam desativadas ate o momento
 		RTS		r7
 				
 ;		
@@ -453,28 +456,27 @@ volume:							; volta o volume no R0
 		MOV		#VISOR, R3			
 		ADD		#35, R3			; coloca o R3 como cursor do volume no primeiro byte
 		
-		CLR		R2
 		CLR		contador
+		CLR		R0
 
 		CMP		(R3), #48		; ver se é igual a zero		
 		BEQ		segundoDigito
 		MOV		(R3), R0
-		SUB		#48,  R0		; deixar o numero em decimal novamente, nao em ascii
+		SUB		#48,  R0		; deixar o numero em decimal novamente, nao em ascii e colocar no R0
 segundoDigito:
 		DEC		R3
-		CMP		(R3), #48
+		CMP		(R3), #48		; ver se é igual a zero
 		BEQ		terceiroDigito
 		MOV		(R3), R2
 		SUB		#48, R2			; deixar o numero em decimal novamente, nao em ascii
-		MOV		#10, contador
+		MOV		#10, contador		
 somar2D:
-		ADD		R2, R0			; adicionar 10 vezes o segundo digito
-		DEC		R2
+		ADD		R2, R0			; adicionar 10 vezes o segundo digito em R0
+		DEC		contador		
 		BNE		somar2D
 
 terceiroDigito:
 		DEC		R3
-		CLR		contador
 		CMP		(R3), #48		; ver se é igual a zero
 		BEQ		finalVolume
 		MOV		(R3), R2
@@ -482,8 +484,8 @@ terceiroDigito:
 		MOV		#100, contador		; adicionar 100 vezes o terceiro digito
 somar3D:					
 		ADD		R2, R0	
-		DEC		R2
+		DEC		contador
 		BNE		somar3D
 finalVolume:	
-		CLR		contador
+		CLR		contador		; limpamos o contador e retornamos
 		RTS		R7
