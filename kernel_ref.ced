@@ -83,8 +83,8 @@ VISOR:		dab		[36]			; Portas de acesso ao visor
 ;------------------------------------------------------------------------------
 		org		_RESET
 ; 1) Desabilitar o sistema de interrupções
-		
-		AND		#HFF7C, INTE			; desabilitando as interrupções
+			;0111-1100		
+		AND		#H7C, INTE			; desabilitando as interrupções
 
 ; 2) Inicializar o stack pointer (SP = R6)
 
@@ -92,19 +92,20 @@ VISOR:		dab		[36]			; Portas de acesso ao visor
 
 ; 3) Inicializar as variáveis internas usadas pelo sistema de interrupções e periféricos (IVET, INTE, etc.)
 
-		CLR		INTS
+enderecoT:	DW		0
+contador:	DB		0
+temporizador:	DW		0
+		
+		CLR		INTS			
 		MOV		#rotinaINT, IVET
+		CLR		enderecoT		; limpando o endereco da função timer e o controle usado para contar os segundos
+
 
 ; 4) Inicializar as variáveis internas do kernel
 
 auxiliarVolume:	DB		0
 CURSOR:		DB		0
-enderecoT:	DW		0
-temporizador:	DW		0
-controleT:	DB		0
-contador:	DB		0
 
-		CLR		enderecoT		; limpando o endereco da função timer e o controle usado para contar os segundos
 
 
 ; 5) Inicializar o teclado zerando o byte de estado (TECST, endereço 65498)
@@ -113,7 +114,7 @@ contador:	DB		0
 
 ; 6) Inicializar o timer
 
-		CLR		TIMDT			; setando o timer para 100 ms
+		MOV		#50, TIMDT			; setando o timer para 50 ms
 
 ; 7) Limpar o visor
 
@@ -133,7 +134,7 @@ limparVolumeLoop:					; seta os 3  byte do volume
 		
 ; 8) Habilitar interrupções
 
-		OR		#H82, INTE		; habilitando interrupções de teclado e timer 1000 - 0011
+		OR		#H83, INTE		; habilitando interrupções de teclado e timer 1000 - 0011
 
 ; 9) Retornar para o programa de aplicação com um desvio para o endereço _APP da memória
 		jmp		_APP
@@ -155,20 +156,20 @@ timerINT:
 		MOV		INTE, R1
 		AND		#H1, R1			; verifica se a interrução do timer esta ativa
 		BEQ		tecladoINT		; se for zero, vai as interrupções do timer estão desligadas, vai verificar o teclado
-		MOV		INTS, R0		; Verifica se a interrupção é do timer
-		AND		#1, R0
+		MOV		INTS, R1		; Verifica se a interrupção é do timer
+		AND		#1, R1
 		BEQ		tecladoINT		; se for, continua, se não vai verificar se é do teclado	
-		JSR		r7,tratamentoITimer	; trata a interrupção do timer
-		AND		#HFFFE,	INTS		; desliga o bit de interrupção do timer
+		JSR		r7, tratamentoITimer	; trata a interrupção do timer
+		AND		#HFE,	INTS		; desliga o bit de interrupção do timer
 tecladoINT:
-		MOV		INTE, R1		
-		AND		#H2, R1
-		BEQ		fimINT			; verifica se a interrupção do teclado esta ativo
-		MOV		INTS,R0			; Verifica se a interrupção é do teclado
-		AND		#2,R0
+;		MOV		INTE, R1		
+;		AND		#H2, R1
+;		BEQ		fimINT			; verifica se a interrupção do teclado esta ativo
+		MOV		INTS,R1			; Verifica se a interrupção é do teclado
+		AND		#2,R1
 		BEQ		fimINT			; se nao for, vai para o fim da função interrupção
 		JSR		r7,tratamentoITeclado	; trata a interrupção do teclado
-		AND		#HFFFD, INTS		; desliga o bit de interrupção do teclado
+		AND		#HFD, INTS		; desliga o bit de interrupção do teclado
 fimINT:
 		
 		MOV		(r6)+,r5		; Retorna os registradores da pilha
@@ -183,17 +184,12 @@ fimINT:
 
 tratamentoITimer:					; Tratamento de interrupção do timer
 		CMP		enderecoT, #0		; compara se o endereço da função do timer é 0
-		JMP		fimTratamentoITimer	; se for, quer dizer que ainda nao lemos nenhum dado, logo, nao fazemos nada.
-		CMP		controleT, #10		; ve se a variavel de controle do timer é 10
-		BNE		adicionarControle	; se não for, adiciona mais um a ela
-		CLR		controleT		; se chegou a dez, ja passou 1 (10 * 100ms) segundo, então limpamos ela para contar de novo			
-		DEC		temporizador		; diminui 1s do temporizador
-		BNE		fimTratamentoITimer	; se nao for zero, continua normalmente
-		JSR		R7, enderecoT		; se for zero, chama a callback	
+		BEQ		fimTratamentoITimer	; se for, quer dizer que ainda nao lemos nenhum dado, logo, nao fazemos nada.
+		SUB		#100, temporizador
+		BGT		fimTratamentoITimer	; se nao for zero, continua normalmente
+		MOV		enderecoT, R1
+		JSR		R7, (R1)		; se for zero, chama a callback	
 		CLR		enderecoT		; limpa o endereco da função da variavel.
-		JMP		fimTratamentoITimer	
-adicionarControle:
-		INC		controleT
 		JMP		fimTratamentoITimer			
 		
 fimTratamentoITimer:
@@ -231,7 +227,7 @@ fimkbhit:
 ; BYTE	getchar()
 ;------------------------------------------------------------------------------
 getchar:
-		;AND		#HFFFD, INTE
+		AND		#HFD, INTE		; desliga a interrupção por teclado
 getcharloop:
 		JSR		R7, kbhit		; chama a função kbhit para ver se há tecla
 		CMP 		R0, #0			; testa se R0 (retorno de kbhit) é zero
@@ -240,7 +236,7 @@ getcharloop:
 		MOV		TECDT, R0		; caso R0 for zero, coloca o dado que esta em TECDT e R0
 		CLR		TECST			; limpa TECST pois o dado ja foi lido
 
-		;OR		#2, INTE
+		OR		#2, INTE
 		RTS	 	R7			
 
 ;	
@@ -421,7 +417,7 @@ fimVolume_:
 ; void	putmsg(BYTE *msg)
 ;------------------------------------------------------------------------------
 putmsg:							; R5 tera o endereço de menoria onde inicia a string
-		AND		#HFFFD, INTE		; desabilitar interrupções na escrita
+		AND		#HFD, INTE		; desabilitar interrupções na escrita
 		MOV		R5, R2	
 		DEC		R2			; diminuo um do end da string pois 
 colocandoMSG:
@@ -445,7 +441,7 @@ timer:						; R5 - tempo do timer
 						; R4 - endereço da callback
 		MOV		R5, temporizador	; Movendo o tempo do timer para a variavel
 		MOV		R4, enderecoT		; movendo o endereço da callback para a variavel, para chamar mais tarde
-	;	OR		#H83, INTE		; ativando as interrupções pelo timer que estavam desativadas ate o momento
+		
 		RTS		r7
 				
 ;		
