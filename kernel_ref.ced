@@ -114,7 +114,7 @@ CURSOR:		DB		0
 
 ; 6) Inicializar o timer
 
-		MOV		#50, TIMDT			; setando o timer para 50 ms
+		CLR		 TIMDT			; setando o timer para 100 ms
 
 ; 7) Limpar o visor
 
@@ -302,10 +302,18 @@ testeVolume:
 		BNE		verificarDez		; se nao for igual, vai verificar o somar 10
 		INC		auxiliarVolume
 testarNovamenteUm:
-		CMP		R3, #65532		; nao deve aumentar o mais de 9  o ultimo byte do volume
+		CMP		R3, #65532		; nao deve aumentar mais de 9  o ultimo byte do volume
 		BEQ		fimVolume	
 		CMP		#57, (R3)		; comparar o ultimo byte do volume com 9
 		BNE		somarMaisUm
+		CMP		#57 , -2(R3)		; testa se os proximos bits do volume sao 99
+		BEQ		testarSegundo
+		JMP		seguirFluxo
+testarSegundo:	
+		CMP		#57, -1(R3)
+		BEQ		fimVolume
+
+seguirFluxo:
 		MOV		#48, (R3)
 		DEC		R3
 		JMP		testarNovamenteUm
@@ -323,6 +331,8 @@ testarNovamenteDez:
 		BEQ		fimVolume
 		CMP		#57, (R3)
 		BNE		somarMaisDez
+		CMP		#57, -1(R3)		; testa se o proximo bit do volume é 9
+		BEQ		fimVolume
 		MOV		#48, (R3)
 		DEC		R3
 		JMP		testarNovamenteDez
@@ -465,7 +475,7 @@ segundoDigito:
 		BEQ		terceiroDigito
 		MOV		(R3), R2
 		SUB		#48, R2			; deixar o numero em decimal novamente, nao em ascii
-		MOV		#10, contador		
+		MOV		#10, contador	
 somar2D:
 		ADD		R2, R0			; adicionar 10 vezes o segundo digito em R0
 		DEC		contador		
