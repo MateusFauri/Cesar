@@ -92,9 +92,6 @@ VISOR:		dab		[36]			; Portas de acesso ao visor
 
 ; 3) Inicializar as variáveis internas usadas pelo sistema de interrupções e periféricos (IVET, INTE, etc.)
 
-enderecoT:	DW		0
-contador:	DB		0
-temporizador:	DW		0
 		
 		CLR		INTS			
 		MOV		#rotinaINT, IVET
@@ -103,9 +100,11 @@ temporizador:	DW		0
 
 ; 4) Inicializar as variáveis internas do kernel
 
-CURSOR:		DB		0
-
-
+		CLR		CURSOR
+		CLR		temporizador
+		CLR		contador
+		CLR		caracter
+		CLR		estadoTeclado
 
 ; 5) Inicializar o teclado zerando o byte de estado (TECST, endereço 65498)
 		
@@ -157,23 +156,23 @@ rotinaINT:
 		MOV		R5, -(R6)
 
 timerINT:
-		MOV		INTE, R1
-		AND		#H1, R1			; verifica se a interrução do timer esta ativa
-		BEQ		tecladoINT		; se for zero, vai as interrupções do timer estão desligadas, vai verificar o teclado
+;;		MOV		INTE, R1
+;;		AND		#H1, R1			; verifica se a interrução do timer esta ativa
+;;		BEQ		tecladoINT		; se for zero, vai as interrupções do timer estão desligadas, vai verificar o teclado
 		MOV		INTS, R1		; Verifica se a interrupção é do timer
 		AND		#1, R1
 		BEQ		tecladoINT		; se for, continua, se não vai verificar se é do teclado	
 		JSR		r7, tratamentoITimer	; trata a interrupção do timer
-		AND		#HFE,	INTS		; desliga o bit de interrupção do timer
+		AND		#HFFFE,	INTS		; desliga o bit de interrupção do timer
 tecladoINT:
-		MOV		INTE, R1		
-		AND		#H2, R1
-		BEQ		fimINT			; verifica se a interrupção do teclado esta ativo
+;;		MOV		INTE, R1		
+;;		AND		#H2, R1
+;;		BEQ		fimINT			; verifica se a interrupção do teclado esta ativo
 		MOV		INTS,R1			; Verifica se a interrupção é do teclado
 		AND		#2,R1
 		BEQ		fimINT			; se nao for, vai para o fim da função interrupção
 		JSR		r7,tratamentoITeclado	; trata a interrupção do teclado
-		AND		#HFD, INTS		; desliga o bit de interrupção do teclado
+		AND		#HFFFD, INTS		; desliga o bit de interrupção do teclado
 fimINT:
 		
 		MOV		(r6)+,r5		; Retorna os registradores da pilha
@@ -204,7 +203,7 @@ fimTratamentoITimer:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 tratamentoITeclado:					; Tratamento das interrupções de teclado
-		
+
 		MOV		TECDT,	R5		; Coloca o valor da tecla no R5 
 
 		MOV		#65535, R3			; R3 tem o endereço do volume no visor
@@ -311,7 +310,7 @@ diminuirDez:
 
 verificarCem_:	
 		CMP		R5, #H3C		; compara dado com sinal <	
-		BNE		fimTratamentoITeclado_	; se nao for igual, o caracter é ascii, colocar na tela
+		BNE		colocarbuffer 		; se nao for igual, o caracter é ascii, colocar na tela
 		SUB		#2, R3			; diminui o volume em 100
 		CMP		(R3), #48
 		BEQ		zerarVolume
@@ -326,7 +325,11 @@ zerarVolume:
 		MOV		#48, (R3)
 		DEC		R3
 		MOV		#48, (R3)	
-		
+		JMP		fimTratamentoITeclado_
+
+colocarBuffer:
+		MOV		TECDT, caracter
+		MOV		TECST, estadoTeclado
 
 
 fimTratamentoITeclado_:
@@ -339,15 +342,15 @@ fimTratamentoITeclado_:
 ; WORD	kbhit()
 ;------------------------------------------------------------------------------
 kbhit:
-
-		CMP		TECST, #H80		; se TECST for igual a H80, então há tecla para ser lida,
-		BEQ		haTecla			; se TECST for H80, a função deve retornar 0 (retorno pelo R0)
-		MOV		#1, R0			; se TECST for diferente de H80, a função deve retornar 1 (retorno pelo R0)
+		TST		estadoTeclado
+		BEQ		naohatecla
+		MOV		#0, R0
 		JMP		fimkbhit
-haTecla:
-		CLR		R0
-fimkbhit:
 
+naohatecla:
+		MOV		#'ç', R0
+
+fimkbhit:
 		RTS		R7
 	
 ;		
@@ -355,16 +358,14 @@ fimkbhit:
 ; BYTE	getchar()
 ;------------------------------------------------------------------------------
 getchar:
-		AND		#HFD, INTE		; desliga a interrupção por teclado
-getcharloop:
 		JSR		R7, kbhit		; chama a função kbhit para ver se há tecla
 		CMP 		R0, #0			; testa se R0 (retorno de kbhit) é zero
-		BNE		getcharloop		; se não for, volta para 'getchar' ate R0 ser zero
+		BNE		getchar			; se não for, volta para 'getchar' ate R0 ser zero
 
-		MOV		TECDT, R0		; caso R0 for zero, coloca o dado que esta em TECDT e R0
-		CLR		TECST			; limpa TECST pois o dado ja foi lido
-		OR		#2, INTE		; liga a interrupção por teclado
-		
+		CLR 		estadoTeclado
+		MOV		caracter, R0
+		CLR		caracter
+
 		RTS	 	R7			
 
 ;	
@@ -418,8 +419,8 @@ backSpace:
 		CMP		R4, #65501		; ve se o cursor ja esta no max da esquerda
 		BMI		fimPutChar		; se sim, vai direto para o fim da função
 		DEC		CURSOR			; se não, decrementa um do CURSOR e, depois, vai para o fim da função
-		DEC		R4
-;;;;;;;		MOV		#H20, (R4)		; limpa o visor no cursor atual
+;;;;;;		DEC		R4
+;;;;;;		MOV		#H20, (R4)		; limpa o visor no cursor atual
 		JMP		fimPutChar
 
 
@@ -514,3 +515,16 @@ somar3D:
 finalVolume:	
 		CLR		contador		; limpamos o contador e retornamos
 		RTS		R7
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Variaveis
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+enderecoT:	DW		0
+contador:	DW		0
+temporizador:	DW		0
+CURSOR:		DW		0
+caracter:	DW		0
+estadoTeclado:	DW		0
